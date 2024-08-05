@@ -1322,6 +1322,57 @@ check_chroot_dir_usability (const char *chdir, const char *user)
 	return b1 && b2;
 }
 
+static const char *openssl_binary_find_exepath(void) {
+	_LOGI ("openvpn: searching for openssl binary");
+	static const char *paths[] = {
+		"/usr/bin/openssl",
+		"/bin/openssl",
+		"/usr/local/bin/openssl",
+		"/usr/sbin/openssl",
+		"/sbin/openssl"
+    };
+
+	int i;
+
+	for (i = 0; i < G_N_ELEMENTS(paths); i++) {
+		if (g_file_test(paths[i], G_FILE_TEST_EXISTS)) {
+			_LOGI ("openvpn: found openssl binary: %s", paths[i]);
+			return paths[i];
+        }
+	}
+	_LOGI ("openvpn: did not find openssl library", paths[i]);
+	return NULL;
+}
+
+static gboolean check_openssl_provider_support(const char *binary_path) {
+	gs_free char *s_stdout = NULL;
+	int exit_code;
+
+	g_return_val_if_fail(binary_path && binary_path[0] == '/', FALSE);
+
+	_LOGI ("openvpn: checking openssl ");
+
+	if (!g_spawn_sync(NULL,
+		(char *[]) {(char *)binary_path, "list", "-providers", "-provider", "tpm2", NULL},
+		NULL,
+		G_SPAWN_STDERR_TO_DEV_NULL,
+		NULL,
+		NULL,
+		&s_stdout,
+		NULL,
+		&exit_code,
+		NULL))
+	{
+		_LOGI ("openvpn: failed to check openssl tpm2 compatibility");
+		return FALSE;
+	}
+
+	gboolean result = WIFEXITED(exit_code) && WEXITSTATUS(exit_code) == 0;
+
+	_LOGI ("openvpn: openssl supports tpm2: %s", result ? "true" : "false");
+	return result;
+}
+
 static gboolean
 nm_openvpn_start_openvpn_binary (NMOpenvpnPlugin *plugin,
                                  NMConnection *connection,
@@ -2011,6 +2062,11 @@ nm_openvpn_start_openvpn_binary (NMOpenvpnPlugin *plugin,
 			_LOGW ("Directory '%s' not usable for chroot by '%s', openvpn will not be chrooted.",
 			        nm_openvpn_chroot, nm_openvpn_user);
 		}
+	}
+
+	/* check whether openssl has tpm2 provider */
+	if (check_openssl_provider_support(openssl_binary_find_exepath())) {
+		args_add_strv (args, "--providers", "default", "tpm2");
 	}
 
 	g_ptr_array_add (args, NULL);
